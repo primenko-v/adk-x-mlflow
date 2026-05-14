@@ -43,6 +43,8 @@ make agent_x_mlflow  # terminal 2 — agent + tracing
 
 `make agent_x_mlflow` will refuse to start if the MLflow server is not reachable.
 
+> **Important:** Unlike traditional MLflow logging, the ADK integration via OTel requires a running MLflow server with a SQL-based backend. File-based storage (`./mlruns`) does NOT support OpenTelemetry ingestion.
+
 ## google-adk: fork and editable install
 
 This project uses a fork of `google-adk` checked in as a git submodule at `vendor/google-adk`. It is installed as an editable package, meaning Python imports the library directly from that directory — there is no copying or packaging step.

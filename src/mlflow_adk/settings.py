@@ -6,7 +6,7 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
-    agent_model: str = "gemini-2.0-flash-lite"
+    agent_model: str = "gemini-3.1-flash-lite"
     mlflow_tracking_uri: str = "http://localhost:5000"
 
 

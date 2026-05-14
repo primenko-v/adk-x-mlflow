@@ -28,6 +28,17 @@ def get_temperature(city: str) -> dict:
         return {"error": f"No temperature data for '{city}'"}
     return {"city": city, "temp_c": temp}
 
+def get_cities() -> list[str]:
+    """Return a list of the cities supported by the `get_temperature` tool
+    
+    Args: None
+
+    Returns:
+        A list of the keys supported by the `get_temperature` tool
+    """
+
+    return list(_CITIES.keys())
+
 
 root_agent = Agent(
     name="simple_agent",
@@ -38,5 +49,5 @@ root_agent = Agent(
         "When asked about the temperature in a city, use the get_temperature tool. "
         "Respond concisely."
     ),
-    tools=[FunctionTool(get_temperature)],
+    tools=[FunctionTool(get_temperature), FunctionTool(get_cities)],
 )
