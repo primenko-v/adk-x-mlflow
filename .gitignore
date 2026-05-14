@@ -1,0 +1,8 @@
+.env
+
+__pycache__/
+.ruff_cache/
+.adk/
+.venv/
+
+*.db
