@@ -20,29 +20,28 @@ uv sync --group dev
 
 ### Configure
 
-Create a `.env` file in the project root:
+```bash
+cp .env.example .env
+```
 
-```
-GOOGLE_CLOUD_PROJECT=your-project
-GOOGLE_CLOUD_LOCATION=europe-north1
-GOOGLE_GENAI_USE_VERTEXAI=true
-```
+Edit `.env` and fill in your Google Cloud project details.
 
 ## Running
 
-Start the MLflow server first (required — file-based storage does not support OpenTelemetry ingestion):
+Run the agent interactively via the ADK web UI (http://localhost:8000):
 
 ```bash
-uv run mlflow server --backend-store-uri sqlite:///mlflow.db --port 5000
+make agent
 ```
 
-Then run the agent:
+To also capture traces in MLflow, start the MLflow server first:
 
 ```bash
-uv run python main.py
+make mlflow        # terminal 1 — MLflow UI at http://localhost:5000
+make agent_x_mlflow  # terminal 2 — agent + tracing
 ```
 
-Open the MLflow UI at http://localhost:5000 to inspect traces.
+`make agent_x_mlflow` will refuse to start if the MLflow server is not reachable.
 
 ## google-adk: fork and editable install
 
@@ -69,14 +68,10 @@ git commit -m "bump google-adk fork to <sha>"
 ## Development
 
 ```bash
-# Lint
-uv run ruff check .
+make format   # format with ruff
+make lint     # lint with ruff
 
-# Format
-uv run ruff format .
-
-# Run tests
-uv run pytest
+uv run pytest                 # all tests
 uv run pytest -m unit         # unit tests only
 uv run pytest -m integration  # requires real credentials
 ```
