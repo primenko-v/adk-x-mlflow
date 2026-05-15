@@ -41,13 +41,25 @@ The plain `make agent` target runs without any tracing.
 - Use `uv` for all dependency management and script execution — no bare `pip` or `python` calls.
 - `google-adk` is installed from the fork at `vendor/google-adk` (editable). Do not add it from PyPI. To update the fork: `git -C vendor/google-adk pull`.
 - Format and lint with `ruff`. Run `ruff format .` then `ruff check .` before committing. Never run ruff on `vendor/` — it is third-party code.
-- KISS: keep code minimal and direct. No abstractions until there is a clear reason for them.
 - Python 3.13+. Use `src/` layout.
 - **Configuration via Pydantic settings** — never read env vars with `os.environ.get`. All config lives in `src/mlflow_adk/settings.py` as a `pydantic_settings.BaseSettings` subclass. This gives free `.env` loading, type coercion, validation, and a serialisable object you can log or pass around (`settings.model_dump()` / `settings.model_dump_json()`).
 
+## Development Methodology
+
+**TDD (Test-Driven Development)**: Red-Green-Refactor cycle
+1. Write a failing test first (red)
+2. Write minimal code to pass the test (green)
+3. Refactor while keeping tests passing
+
+**KISS (Keep It Simple, Stupid)**: Prefer simple solutions. Don't add abstractions, operators, or features until actually needed.
+
+**No re-exports**: Import from the actual module path, not from `__init__.py` re-exports. Keep `__init__.py` files minimal (docstring only). This makes imports explicit and traceable.
+
+**Pydantic vs dataclass**: Use Pydantic `BaseModel` for types that cross a system boundary (e.g. API responses, YAML config, queue payloads, HTTP requests). Use `@dataclass` for internal data that never leaves the process.
+
 ## Testing
 
-Follow TDD: write the test first, then write the code to make it pass. Tests are not an afterthought.
+Tests are not an afterthought — write the test first (see TDD above).
 
 **Framework**: pytest
 

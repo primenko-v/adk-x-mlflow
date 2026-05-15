@@ -43,3 +43,6 @@ markers = [
     "unit: no external dependencies",
     "integration: requires real API/credentials",
 ]
+filterwarnings = [
+    "ignore::DeprecationWarning:google.*",
+]
