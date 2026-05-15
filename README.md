@@ -46,6 +46,34 @@ It runs `src/mlflow_adk/server.py` — a Python launcher that sets up the MLflow
 experiment and OTLP export before starting the ADK web server, so tracing
 configuration is explicit and reusable from other scripts (simulations, etc.).
 
+### Simulation mode
+
+Run a scripted multi-turn conversation against the agent using an LLM-backed user simulator:
+
+```bash
+make mlflow    # terminal 1 — must be running
+make simulate  # terminal 2
+```
+
+Simulation traces land in a dedicated MLflow experiment (`adk-simulation` by default, configurable via `MLFLOW_SIMULATION_EXPERIMENT` in `.env`) so they don't mix with interactive sessions.
+
+Scenarios are YAML files in `simulations/scenarios/`. Each file becomes one eval case:
+
+```yaml
+starting_prompt: "What's the weather like in London?"
+conversation_plan: |
+  - Ask about the temperature in London.
+  - Ask which cities the assistant supports.
+  - Ask the temperature in a city the assistant doesn't support.
+  - Stop once you have those three answers.
+```
+
+The user simulator is LLM-backed (`gemini-2.5-flash` via ADK defaults) and drives the conversation autonomously according to the plan. To run with a non-default agent module:
+
+```bash
+uv run python -m mlflow_adk.simulate --agent my.agent.module
+```
+
 > **Important:** Unlike traditional MLflow logging, the ADK integration via OTel requires a running MLflow server with a SQL-based backend. File-based storage (`./mlruns`) does NOT support OpenTelemetry ingestion.
 
 ## google-adk: fork and editable install
