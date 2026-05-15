@@ -42,6 +42,9 @@ make agent_x_mlflow  # terminal 2 — agent + tracing
 ```
 
 `make agent_x_mlflow` will refuse to start if the MLflow server is not reachable.
+It runs `src/mlflow_adk/server.py` — a Python launcher that sets up the MLflow
+experiment and OTLP export before starting the ADK web server, so tracing
+configuration is explicit and reusable from other scripts (simulations, etc.).
 
 > **Important:** Unlike traditional MLflow logging, the ADK integration via OTel requires a running MLflow server with a SQL-based backend. File-based storage (`./mlruns`) does NOT support OpenTelemetry ingestion.
 

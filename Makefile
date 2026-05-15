@@ -15,10 +15,7 @@ agent:
 agent_x_mlflow:
 	@curl -sf $(MLFLOW_TRACKING_URI)/health > /dev/null 2>&1 || \
 		{ echo "MLflow server is not running. Start it first with: make mlflow"; exit 1; }
-	@EXPERIMENT_ID=$$(uv run python -c "import mlflow; mlflow.set_tracking_uri('$(MLFLOW_TRACKING_URI)'); print(mlflow.set_experiment('$(MLFLOW_EXPERIMENT)').experiment_id)") && \
-	OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=$(MLFLOW_TRACKING_URI)/v1/traces \
-	OTEL_EXPORTER_OTLP_HEADERS=x-mlflow-experiment-id=$$EXPERIMENT_ID \
-	uv run adk web src/mlflow_adk/agents/
+	uv run python -m mlflow_adk.server
 
 format:
 	uv run ruff format .
