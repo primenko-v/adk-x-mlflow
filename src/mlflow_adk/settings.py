@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     agent_model: str = "gemini-3.1-flash-lite"
     mlflow_tracking_uri: str = "http://localhost:5000"
     mlflow_experiment: str = "adk-demo"
+    mlflow_simulation_experiment: str = "adk-simulation"
 
 
 settings = Settings()

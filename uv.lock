@@ -1893,6 +1893,8 @@ dependencies = [
     { name = "mlflow" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "pydantic-settings" },
+    { name = "python-dotenv" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -1909,6 +1911,8 @@ requires-dist = [
     { name = "mlflow", specifier = ">=3.6.0" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "pydantic-settings", specifier = ">=2.14.1" },
+    { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
 ]
 
 [package.metadata.requires-dev]

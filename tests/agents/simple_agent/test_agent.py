@@ -10,7 +10,9 @@ def test_get_temperature_known_city_returns_temp():
 
 @pytest.mark.unit
 def test_get_temperature_unknown_city_returns_error():
-    assert get_temperature("atlantis") == {"error": "No temperature data for 'atlantis'"}
+    assert get_temperature("atlantis") == {
+        "error": "No temperature data for 'atlantis'"
+    }
 
 
 @pytest.mark.unit
