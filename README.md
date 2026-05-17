@@ -85,6 +85,24 @@ uv run python -m mlflow_adk.simulate --no-mlflow --output-traces traces.jsonl
 
 > **Important:** Unlike traditional MLflow logging, the ADK integration via OTel requires a running MLflow server with a SQL-based backend. File-based storage (`./mlruns`) does NOT support OpenTelemetry ingestion.
 
+## Model configuration
+
+Two model configurations are supported, selected via `.env`:
+
+**Standard (non-Live API)** — default in `.env.example`:
+```
+GOOGLE_CLOUD_LOCATION=global
+AGENT_MODEL=gemini-3.1-flash-lite
+```
+
+**Live API** — required for audio/streaming models:
+```
+GOOGLE_CLOUD_LOCATION=europe-west1
+AGENT_MODEL=gemini-live-2.5-flash-native-audio
+```
+
+The `global` endpoint does not support Live API models; use a regional endpoint (e.g. `europe-west1`) when running those.
+
 ## google-adk: fork and editable install
 
 This project uses a fork of `google-adk` checked in as a git submodule at `vendor/google-adk`. It is installed as an editable package, meaning Python imports the library directly from that directory — there is no copying or packaging step.

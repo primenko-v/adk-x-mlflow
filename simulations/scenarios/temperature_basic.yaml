@@ -3,4 +3,7 @@ conversation_plan: |
   - Ask about the temperature in London.
   - Ask which cities the assistant supports.
   - Ask the temperature in a city the assistant doesn't support.
-  - Stop once you have those three answers.
+  - Ask the temperature for one more supported city
+  - Ask the distance from Stockholm to that supported city
+  - Thank the agent for help
+  - Stop the conversation
