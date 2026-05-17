@@ -27,6 +27,7 @@ packages = ["src/mlflow_adk"]
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.6.0",
     "pytest",
     "pytest-asyncio",
     "ruff",
