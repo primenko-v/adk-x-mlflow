@@ -48,4 +48,5 @@ markers = [
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:google.*",
+    "ignore::UserWarning:google.*",
 ]

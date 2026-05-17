@@ -1,6 +1,40 @@
 import pytest
+from google.adk.evaluation.evaluation_generator import EvaluationGenerator
 
-from mlflow_adk.simulate import load_eval_set
+from mlflow_adk.simulate import load_eval_set, main
+
+
+@pytest.mark.unit
+async def test_generate_responses_uses_user_simulator_config_from_yaml(
+    tmp_path, monkeypatch, no_tracing
+):
+    scenarios = tmp_path / "scenarios"
+    scenarios.mkdir()
+    (scenarios / "s.yaml").write_text(
+        "starting_prompt: 'Hi'\nconversation_plan: 'Ask once.\n'\n"
+    )
+    (tmp_path / "user_simulator.yaml").write_text(
+        "model: gemini-test\nmaxAllowedInvocations: 7\n"
+    )
+
+    captured = {}
+
+    async def fake_process_query(
+        module_name, user_simulator, agent_name=None, initial_session=None
+    ):
+        captured["user_simulator"] = user_simulator
+        return []
+
+    monkeypatch.setattr(EvaluationGenerator, "_process_query", fake_process_query)
+
+    await main(
+        scenarios_dir=scenarios,
+        user_simulator_config_path=tmp_path / "user_simulator.yaml",
+    )
+
+    sim = captured["user_simulator"]
+    assert sim._config.model == "gemini-test"
+    assert sim._config.max_allowed_invocations == 7
 
 
 @pytest.mark.unit
