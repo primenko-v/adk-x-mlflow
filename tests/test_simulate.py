@@ -1,7 +1,12 @@
+import json
+import os
+
 import pytest
 from google.adk.evaluation.evaluation_generator import EvaluationGenerator
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
 
-from mlflow_adk.simulate import load_eval_set, main
+from mlflow_adk.simulate import load_eval_set, run_simulation
 
 
 @pytest.mark.unit
@@ -27,7 +32,7 @@ async def test_generate_responses_uses_user_simulator_config_from_yaml(
 
     monkeypatch.setattr(EvaluationGenerator, "_process_query", fake_process_query)
 
-    await main(
+    await run_simulation(
         scenarios_dir=scenarios,
         user_simulator_config_path=tmp_path / "user_simulator.yaml",
     )
@@ -35,6 +40,59 @@ async def test_generate_responses_uses_user_simulator_config_from_yaml(
     sim = captured["user_simulator"]
     assert sim._config.model == "gemini-test"
     assert sim._config.max_allowed_invocations == 7
+
+
+@pytest.mark.integration
+async def test_simulation_writes_spans_to_file_sink(tmp_path):
+    """End-to-end demo for the ADK PR.
+
+    Drives the simple_agent with an LLM-backed user simulator configured from
+    YAML (this PR's feature), routes spans to a JSONL file sink instead of
+    MLflow, and verifies the agent actually ran.
+
+    Reviewers can run just this test (requires GOOGLE_CLOUD_PROJECT + Vertex
+    AI credentials):
+
+        uv run pytest tests/test_simulate.py -v -m integration
+    """
+    if not os.environ.get("GOOGLE_CLOUD_PROJECT"):
+        pytest.skip("Requires GOOGLE_CLOUD_PROJECT for Vertex AI calls")
+
+    scenarios = tmp_path / "scenarios"
+    scenarios.mkdir()
+    (scenarios / "weather.yaml").write_text(
+        'starting_prompt: "What\'s the weather in London?"\n'
+        "conversation_plan: 'Ask once and stop.'\n"
+    )
+    config_path = tmp_path / "user_simulator.yaml"
+    config_path.write_text("model: gemini-3.1-flash-lite\nmaxAllowedInvocations: 1\n")
+    traces_path = tmp_path / "traces.jsonl"
+
+    await run_simulation(
+        scenarios_dir=scenarios,
+        user_simulator_config_path=config_path,
+        mlflow_enabled=False,
+        output_traces=traces_path,
+    )
+
+    # In production, BatchSpanProcessor flushes via atexit on process exit; in
+    # this in-process test we must flush explicitly before reading the file.
+    provider = trace.get_tracer_provider()
+    assert isinstance(provider, SDKTracerProvider)
+    provider.force_flush()
+
+    assert traces_path.exists(), "expected spans file to be written"
+    spans = [
+        json.loads(line)
+        for line in traces_path.read_text().splitlines()
+        if line.strip()
+    ]
+    assert spans, "expected at least one span to be captured"
+
+    span_names = {s.get("name") for s in spans}
+    assert any(n and n.startswith("invoke_agent") for n in span_names), (
+        f"expected an invoke_agent span; got: {sorted(span_names)}"
+    )
 
 
 @pytest.mark.unit

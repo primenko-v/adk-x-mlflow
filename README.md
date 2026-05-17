@@ -72,7 +72,12 @@ The user simulator is LLM-backed (`gemini-2.5-flash` via ADK defaults) and drive
 
 ```bash
 uv run python -m mlflow_adk.simulate --agent my.agent.module --experiment my-exp
+
+# Skip MLflow entirely and dump spans to a local JSONL file instead:
+uv run python -m mlflow_adk.simulate --no-mlflow --output-traces traces.jsonl
 ```
+
+`--mlflow` (default on) and `--output-traces` are independent — you can run with both sinks active, just one, or neither.
 
 > **Important:** Unlike traditional MLflow logging, the ADK integration via OTel requires a running MLflow server with a SQL-based backend. File-based storage (`./mlruns`) does NOT support OpenTelemetry ingestion.
 

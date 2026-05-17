@@ -13,7 +13,7 @@ from google.adk.evaluation.simulation.llm_backed_user_simulator import (
 )
 from google.adk.telemetry.setup import maybe_set_otel_providers
 
-from mlflow_adk.tracing import configure_tracing, setup_otlp_export
+from mlflow_adk.tracing import add_file_sink, configure_tracing, setup_otlp_export
 
 AGENT_MODULE = "mlflow_adk.agents.simple_agent"
 DEFAULT_EXPERIMENT = "adk-simulation"
@@ -40,14 +40,25 @@ def load_eval_set(scenarios_dir: Path) -> EvalSet:
     return EvalSet(eval_set_id="adk-x-mlflow", eval_cases=cases)
 
 
-async def main(
+async def run_simulation(
     scenarios_dir: Path = DEFAULT_SCENARIOS_DIR,
     experiment: str = DEFAULT_EXPERIMENT,
     agent_module: str = AGENT_MODULE,
     user_simulator_config_path: Path = DEFAULT_USER_SIMULATOR_CONFIG,
+    mlflow_enabled: bool = True,
+    output_traces: Path | None = None,
 ) -> None:
-    setup_otlp_export(experiment)
+    if not mlflow_enabled and output_traces is None:
+        logger.warning(
+            "Tracing disabled: --no-mlflow set and no --output-traces path provided."
+        )
+
+    if mlflow_enabled:
+        setup_otlp_export(experiment)
     maybe_set_otel_providers()
+    if output_traces is not None:
+        add_file_sink(output_traces)
+        logger.info("Writing spans to %s", output_traces)
     configure_tracing()
 
     eval_set = load_eval_set(scenarios_dir)
@@ -84,12 +95,27 @@ if __name__ == "__main__":
         default=DEFAULT_USER_SIMULATOR_CONFIG,
         dest="user_simulator",
     )
+    parser.add_argument(
+        "--mlflow",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Export traces to MLflow (default: on).",
+    )
+    parser.add_argument(
+        "--output-traces",
+        type=Path,
+        default=None,
+        dest="output_traces",
+        help="Also write spans as JSON to this path.",
+    )
     args = parser.parse_args()
     asyncio.run(
-        main(
+        run_simulation(
             args.scenarios,
             experiment=args.experiment,
             agent_module=args.agent,
             user_simulator_config_path=args.user_simulator,
+            mlflow_enabled=args.mlflow,
+            output_traces=args.output_traces,
         )
     )

@@ -17,11 +17,13 @@ import json
 import os
 import threading
 from collections import defaultdict
+from pathlib import Path
 
 import mlflow
 from opentelemetry import trace
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor
 from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 
 from mlflow_adk.settings import settings
 
@@ -188,3 +190,26 @@ def configure_tracing() -> bool:
 
     provider.add_span_processor(_SessionIdSpanProcessor())
     return True
+
+
+def add_file_sink(path: Path) -> None:
+    """Register a span exporter that writes JSONL spans to ``path``.
+
+    Each line is one compact JSON span — greppable, line-streamable.
+    Independent of the MLflow OTLP exporter; both can be active at once.
+    Creates an ``SDKTracerProvider`` if one isn't already installed (e.g.
+    when running with ``--no-mlflow`` so no OTLP env vars were set).
+    """
+    provider = trace.get_tracer_provider()
+    if not isinstance(provider, SDKTracerProvider):
+        provider = SDKTracerProvider()
+        trace.set_tracer_provider(provider)
+
+    provider.add_span_processor(
+        BatchSpanProcessor(
+            ConsoleSpanExporter(
+                out=path.open("w"),
+                formatter=lambda span: span.to_json(indent=None) + "\n",
+            )
+        )
+    )
