@@ -50,13 +50,13 @@ async def test_simulation_writes_spans_to_file_sink(tmp_path):
     YAML (this PR's feature), routes spans to a JSONL file sink instead of
     MLflow, and verifies the agent actually ran.
 
-    Reviewers can run just this test (requires GOOGLE_CLOUD_PROJECT + Vertex
-    AI credentials):
+    Reviewers can run just this test (requires GOOGLE_CLOUD_PROJECT and ADC
+    via ``gcloud auth application-default login``):
 
         uv run pytest tests/test_simulate.py -v -m integration
     """
     if not os.environ.get("GOOGLE_CLOUD_PROJECT"):
-        pytest.skip("Requires GOOGLE_CLOUD_PROJECT for Vertex AI calls")
+        pytest.skip("Requires GOOGLE_CLOUD_PROJECT")
 
     scenarios = tmp_path / "scenarios"
     scenarios.mkdir()

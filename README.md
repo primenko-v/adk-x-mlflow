@@ -24,7 +24,11 @@ uv sync --group dev
 cp .env.example .env
 ```
 
-Edit `.env` and fill in your Google Cloud project details.
+Edit `.env` and set `GOOGLE_CLOUD_PROJECT`. Then authenticate with:
+
+```bash
+gcloud auth application-default login
+```
 
 ## Running
 
@@ -111,5 +115,5 @@ make lint     # lint with ruff
 
 uv run pytest                 # all tests
 uv run pytest -m unit         # unit tests only
-uv run pytest -m integration  # requires real credentials
+uv run pytest -m integration  # requires GOOGLE_CLOUD_PROJECT + ADC
 ```
