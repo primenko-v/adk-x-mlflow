@@ -1,7 +1,6 @@
-
 import pytest
 
-from mlflow_adk.simulate import _load_eval_set
+from mlflow_adk.simulate import load_eval_set
 
 
 @pytest.mark.unit
@@ -11,7 +10,7 @@ def test_load_eval_set_builds_cases_from_yaml(tmp_path):
         "conversation_plan: 'Ask about temperature.\n'\n"
     )
 
-    eval_set = _load_eval_set(tmp_path)
+    eval_set = load_eval_set(tmp_path)
 
     assert eval_set.eval_set_id == "adk-x-mlflow"
     assert len(eval_set.eval_cases) == 1

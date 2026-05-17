@@ -25,16 +25,17 @@ make mlflow
 make agent
 
 # Run the agent with MLflow tracing (checks MLflow is up first)
-make agent_with_mlflow
+make agent_x_mlflow
 
 # Lint / format
 make lint
 make format
 ```
 
-`make agent_with_mlflow` checks that the MLflow server is reachable (`/health`), then sets
-`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` inline so `adk web` wires its OTel tracer to MLflow at startup.
-The plain `make agent` target runs without any tracing.
+`make agent_x_mlflow` checks that the MLflow server is reachable (`/health`), then runs
+`python -m mlflow_adk.server`, which configures the MLflow experiment and OTLP export
+before starting the ADK web server. The plain `make agent` target runs vanilla `adk web`
+without any tracing.
 
 ## Rules
 

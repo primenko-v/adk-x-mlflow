@@ -2,7 +2,6 @@
 export
 
 MLFLOW_TRACKING_URI ?= http://localhost:5000
-MLFLOW_EXPERIMENT ?= adk-demo
 
 .PHONY: mlflow agent agent_x_mlflow simulate format lint test
 

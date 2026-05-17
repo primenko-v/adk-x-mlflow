@@ -4,22 +4,21 @@ import logging
 from pathlib import Path
 
 import yaml
-from dotenv import load_dotenv
 from google.adk.evaluation.conversation_scenarios import ConversationScenario
 from google.adk.evaluation.eval_case import EvalCase
 from google.adk.evaluation.eval_set import EvalSet
 from google.adk.evaluation.evaluation_generator import EvaluationGenerator
 from google.adk.telemetry.setup import maybe_set_otel_providers
 
-from mlflow_adk.settings import settings
 from mlflow_adk.tracing import configure_tracing, setup_otlp_export
 
 AGENT_MODULE = "mlflow_adk.agents.simple_agent"
+DEFAULT_EXPERIMENT = "adk-simulation"
 
 logger = logging.getLogger(__name__)
 
 
-def _load_eval_set(scenarios_dir: Path) -> EvalSet:
+def load_eval_set(scenarios_dir: Path) -> EvalSet:
     cases = []
     for path in sorted(scenarios_dir.glob("*.yaml")):
         scenario = ConversationScenario.model_validate(yaml.safe_load(path.read_text()))
@@ -28,22 +27,23 @@ def _load_eval_set(scenarios_dir: Path) -> EvalSet:
     return EvalSet(eval_set_id="adk-x-mlflow", eval_cases=cases)
 
 
-async def main(scenarios_dir: Path, agent_module: str = AGENT_MODULE) -> None:
-    load_dotenv()
-    setup_otlp_export(settings.mlflow_simulation_experiment)
+async def main(
+    scenarios_dir: Path,
+    experiment: str = DEFAULT_EXPERIMENT,
+    agent_module: str = AGENT_MODULE,
+) -> None:
+    setup_otlp_export(experiment)
     maybe_set_otel_providers()
     configure_tracing()
 
-    eval_set = _load_eval_set(scenarios_dir)
+    eval_set = load_eval_set(scenarios_dir)
     logger.info(
         "Starting simulation — experiment: %s | agent: %s | scenarios: %d",
-        settings.mlflow_simulation_experiment,
+        experiment,
         agent_module,
         len(eval_set.eval_cases),
     )
 
-    # TODO(once PR lands): pass user_simulator_config=LlmBackedUserSimulatorConfig(...)
-    # loaded from simulations/user_simulator.yaml.
     result = await EvaluationGenerator.generate_responses(
         eval_set=eval_set,
         agent_module_path=agent_module,
@@ -59,6 +59,9 @@ if __name__ == "__main__":
     )
     parser = argparse.ArgumentParser()
     parser.add_argument("--scenarios", type=Path, default=Path("simulations/scenarios"))
+    parser.add_argument("--experiment", default=DEFAULT_EXPERIMENT)
     parser.add_argument("--agent", default=AGENT_MODULE)
     args = parser.parse_args()
-    asyncio.run(main(args.scenarios, agent_module=args.agent))
+    asyncio.run(
+        main(args.scenarios, experiment=args.experiment, agent_module=args.agent)
+    )

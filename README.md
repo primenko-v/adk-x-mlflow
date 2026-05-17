@@ -55,7 +55,7 @@ make mlflow    # terminal 1 — must be running
 make simulate  # terminal 2
 ```
 
-Simulation traces land in a dedicated MLflow experiment (`adk-simulation` by default, configurable via `MLFLOW_SIMULATION_EXPERIMENT` in `.env`) so they don't mix with interactive sessions.
+Simulation traces land in a dedicated MLflow experiment (`adk-simulation` by default, overridable with `--experiment`) so they don't mix with interactive sessions.
 
 Scenarios are YAML files in `simulations/scenarios/`. Each file becomes one eval case:
 
@@ -68,10 +68,10 @@ conversation_plan: |
   - Stop once you have those three answers.
 ```
 
-The user simulator is LLM-backed (`gemini-2.5-flash` via ADK defaults) and drives the conversation autonomously according to the plan. To run with a non-default agent module:
+The user simulator is LLM-backed (`gemini-2.5-flash` via ADK defaults) and drives the conversation autonomously according to the plan. CLI flags:
 
 ```bash
-uv run python -m mlflow_adk.simulate --agent my.agent.module
+uv run python -m mlflow_adk.simulate --agent my.agent.module --experiment my-exp
 ```
 
 > **Important:** Unlike traditional MLflow logging, the ADK integration via OTel requires a running MLflow server with a SQL-based backend. File-based storage (`./mlruns`) does NOT support OpenTelemetry ingestion.
