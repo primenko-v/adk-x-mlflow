@@ -14,21 +14,99 @@ provider so MLflow receives session-grouped traces with populated inputs/outputs
 """
 
 import json
+import logging
 import os
 import threading
 from collections import defaultdict
+from contextvars import ContextVar
 from pathlib import Path
 
+import git
 import mlflow
-from opentelemetry import trace
+from mlflow.tracing.utils import generate_mlflow_trace_id_from_otel_trace_id
+from opentelemetry import trace as otel_trace
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor
 from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 
 from mlflow_adk.settings import settings
 
+logger = logging.getLogger(__name__)
+
 _configured_providers: set[int] = set()
 _lock = threading.Lock()
+
+
+# ---------------------------------------------------------------------------
+# Trace tagging
+# ---------------------------------------------------------------------------
+
+# Ambient tags applied to every trace whose root span ends while this var is
+# set. Callers set it before driving the agent (per-scenario in the simulation
+# loop, once at startup for the interactive server) and the span processor
+# buffers (request_id, tags) for each root span seen. The caller then drains
+# the buffer and applies tags via mlflow.set_trace_tag once spans have been
+# flushed.
+trace_tags: ContextVar[dict[str, str] | None] = ContextVar("trace_tags", default=None)
+
+_tagged_traces_buffer: list[tuple[str, dict[str, str]]] = []
+_tagged_traces_lock = threading.Lock()
+
+
+def drain_tagged_trace_ids() -> list[tuple[str, dict[str, str]]]:
+    """Pop and return all buffered (request_id, tags) entries."""
+    with _tagged_traces_lock:
+        entries = _tagged_traces_buffer[:]
+        _tagged_traces_buffer.clear()
+    return entries
+
+
+def git_info() -> dict[str, str]:
+    """Best-effort git provenance tags for the current checkout.
+
+    Returns a dict with ``git_commit``, ``git_branch`` (omitted on detached
+    HEAD), ``git_dirty``. Empty dict if git is unavailable or the cwd is not
+    a git checkout — callers can splat unconditionally:
+
+        tags = {"source": "simulation", **git_info()}
+
+    Keys deliberately do **not** use MLflow's ``mlflow.source.git.*``
+    convention. The MLflow UI hides ``mlflow.*``-prefixed tags from the
+    trace-detail chip display (treats them as system tags), so unprefixed
+    keys are used for visibility. ``dirty`` still matches MLflow's semantic
+    — tracked changes only, untracked files ignored — via
+    ``Repo.is_dirty(untracked_files=False)``.
+    """
+    try:
+        repo = git.Repo(search_parent_directories=True)
+    except git.InvalidGitRepositoryError:
+        return {}
+    tags = {
+        "git_commit": repo.head.commit.hexsha,
+        "git_dirty": str(repo.is_dirty(untracked_files=False)).lower(),
+    }
+    if not repo.head.is_detached:
+        tags["git_branch"] = repo.active_branch.name
+    return tags
+
+
+def flush_and_apply_tags() -> None:
+    """Flush queued spans, then apply any buffered tags via MLflow.
+
+    Calls ``provider.force_flush()`` so the ``BatchSpanProcessor`` has shipped
+    all queued spans to MLflow — ``set_trace_tag`` needs the ``TraceInfo``
+    record to exist before tags can be attached. A per-tag try/except prevents
+    one failed call from skipping the rest.
+    """
+    provider = otel_trace.get_tracer_provider()
+    if hasattr(provider, "force_flush"):
+        provider.force_flush()
+    for request_id, tags in drain_tagged_trace_ids():
+        for key, value in tags.items():
+            try:
+                mlflow.set_trace_tag(trace_id=request_id, key=key, value=value)
+            except Exception:
+                logger.exception("Failed to set tag %s on trace %s", key, request_id)
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +192,7 @@ class _SessionIdSpanProcessor(SpanProcessor):
                 if out:
                     entry["output"] = out
 
-        # 3. Root span: inject accumulated inputs/outputs.
+        # 3. Root span: inject accumulated inputs/outputs and buffer tags.
         if span.parent is None:
             with self._lock:
                 entry = self._pending.pop(trace_id, None)
@@ -127,6 +205,16 @@ class _SessionIdSpanProcessor(SpanProcessor):
                     span._attributes["mlflow.spanOutputs"] = json.dumps(
                         [{"role": "assistant", "content": entry["output"]}]
                     )
+
+            tags = trace_tags.get()
+            if tags:
+                # Use MLflow's canonical function rather than the literal
+                # "tr-<hex>" formula so we adapt automatically if MLflow ever
+                # flips to a different schema (a v4 form already exists at
+                # mlflow.tracing.utils.generate_trace_id_v4_from_otel_trace_id).
+                request_id = generate_mlflow_trace_id_from_otel_trace_id(trace_id)
+                with _tagged_traces_lock:
+                    _tagged_traces_buffer.append((request_id, dict(tags)))
 
     def on_start(self, span, parent_context=None) -> None:
         pass
@@ -143,7 +231,7 @@ class _SessionIdSpanProcessor(SpanProcessor):
 # ---------------------------------------------------------------------------
 
 
-def setup_otlp_export(experiment_name: str | None = None) -> None:
+def setup_otlp_export(experiment_name: str) -> None:
     """Configure MLflow as the OTLP destination for ADK traces.
 
     Sets the MLflow experiment and writes the OTLP env vars that ADK's
@@ -152,11 +240,10 @@ def setup_otlp_export(experiment_name: str | None = None) -> None:
     creates the OTel provider).
 
     Args:
-        experiment_name: MLflow experiment to create or activate.  Defaults to
-            ``settings.mlflow_experiment``.
+        experiment_name: MLflow experiment to create or activate.
     """
     mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
-    experiment = mlflow.set_experiment(experiment_name or settings.mlflow_experiment)
+    experiment = mlflow.set_experiment(experiment_name)
     os.environ.setdefault(
         "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
         f"{settings.mlflow_tracking_uri}/v1/traces",
@@ -178,7 +265,7 @@ def configure_tracing() -> bool:
         ``True`` if the processor was registered, ``False`` if no
         ``SDKTracerProvider`` is available (no-op when running without OTel).
     """
-    provider = trace.get_tracer_provider()
+    provider = otel_trace.get_tracer_provider()
     if not isinstance(provider, SDKTracerProvider):
         return False
 
@@ -200,10 +287,10 @@ def add_file_sink(path: Path) -> None:
     Creates an ``SDKTracerProvider`` if one isn't already installed (e.g.
     when running with ``--no-mlflow`` so no OTLP env vars were set).
     """
-    provider = trace.get_tracer_provider()
+    provider = otel_trace.get_tracer_provider()
     if not isinstance(provider, SDKTracerProvider):
         provider = SDKTracerProvider()
-        trace.set_tracer_provider(provider)
+        otel_trace.set_tracer_provider(provider)
 
     provider.add_span_processor(
         BatchSpanProcessor(

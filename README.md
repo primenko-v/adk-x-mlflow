@@ -59,7 +59,7 @@ make mlflow    # terminal 1 — must be running
 make simulate  # terminal 2
 ```
 
-Simulation traces land in a dedicated MLflow experiment (`adk-simulation` by default, overridable with `--experiment`) so they don't mix with interactive sessions.
+Simulation traces land in a dedicated MLflow experiment (the `make simulate` target uses `adk-sim`; override with `--experiment NAME`) so they don't mix with interactive sessions.
 
 Scenarios are YAML files in `simulations/scenarios/`. Each file becomes one eval case:
 
@@ -77,11 +77,12 @@ The user simulator is LLM-backed (`gemini-2.5-flash` via ADK defaults) and drive
 ```bash
 uv run python -m mlflow_adk.simulate --agent my.agent.module --experiment my-exp
 
-# Skip MLflow entirely and dump spans to a local JSONL file instead:
-uv run python -m mlflow_adk.simulate --no-mlflow --output-traces traces.jsonl
+# Skip MLflow entirely and dump spans to a local JSONL file instead
+# (omitting --experiment disables MLflow export):
+uv run python -m mlflow_adk.simulate --output-traces traces.jsonl
 ```
 
-`--mlflow` (default on) and `--output-traces` are independent — you can run with both sinks active, just one, or neither.
+`--experiment` and `--output-traces` are independent — you can run with both sinks active or just one. If neither is provided, the simulation refuses to start (no trace sink configured).
 
 > **Important:** Unlike traditional MLflow logging, the ADK integration via OTel requires a running MLflow server with a SQL-based backend. File-based storage (`./mlruns`) does NOT support OpenTelemetry ingestion.
 

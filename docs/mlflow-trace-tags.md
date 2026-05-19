@@ -66,16 +66,16 @@ traces in a session at any time using `search_traces` + `set_trace_tag`.
 ## Runs
 
 `mlflow.set_tag(key, value)` sets a tag on the **active run** (experiment
-tracking). Runs have nothing to do with traces. Do not use run tags to annotate
-tracing data.
+tracking). Runs and traces live in independent hierarchies — a Run is not a
+parent of any trace.
+
+That said, MLflow supports a *correlation* between Runs and traces via the
+`mlflow.sourceRun` trace metadata key. Runs become relevant to this project
+once evaluation is added (`mlflow.genai.evaluate(...)` creates one). See
+[mlflow-runs-and-traces.md](mlflow-runs-and-traces.md) for how to wire that
+correlation when the evaluation branch is built — not in scope here.
 
 ---
-
-> **Status — design proposal.** The sections below describe how trace tagging
-> *should* be wired in this project. As of writing, `src/mlflow_adk/tracing.py`,
-> `src/mlflow_adk/simulate.py`, and `src/mlflow_adk/server.py` do not yet
-> implement this. The sections above (entity hierarchy, tags vs. metadata vs.
-> attributes, sessions, runs) describe MLflow as it is today.
 
 ## How to set trace tags in this project
 
@@ -107,9 +107,49 @@ of tags through any call stack. The span processor reads it as each root span
 ends and buffers `(request_id, tags)`; the caller drains the buffer and applies
 the tags via `mlflow.set_trace_tag` once spans have been flushed.
 
-The same primitive serves both callers: the simulation loop sets
-`{"scenario": eval_case.eval_id, "source": "simulation"}` per scenario; the
-interactive server sets `{"source": "interactive"}` once for its lifetime.
+The same primitive serves both callers. The simulation loop sets per
+scenario:
+
+```python
+{
+    "source": "simulation",
+    "agent_module": agent_module,
+    "scenario": eval_case.eval_id,
+    "mlflow.traceName": eval_case.eval_id,
+    # plus git_commit, git_branch (when not detached), git_dirty when
+    # the cwd is a git checkout
+    **git_info(),
+}
+```
+
+The interactive server sets, once for its lifetime:
+
+```python
+{
+    "source": "interactive",
+    **git_info(),  # same git tags as above
+}
+```
+
+The server omits ``agent_module`` because a single ADK web process serves
+multiple agents (chosen per request via URL), so a process-level tag would
+be misleading. The simulation always runs against exactly one ``agent_module``
+per ``run_simulation()`` invocation.
+
+### A note on key names
+
+MLflow's standard tag namespace (`mlflow.source.name`, `mlflow.source.git.commit`,
+etc. — see `mlflow.utils.mlflow_tags`) is **deliberately not used here**.
+The MLflow UI hides `mlflow.*`-prefixed tags from the trace-detail chip
+display (treats them as system tags), so adopting that convention would make
+our provenance invisible to anyone scanning a trace in the UI. The
+namespaced versions are still set on Runs by MLflow's own machinery; we just
+diverge for the trace-tag path where UI visibility matters.
+
+One exception: ``mlflow.traceName`` is kept namespaced. It's not filtered as
+a system tag — it's a *consumed* tag that MLflow uses to override the trace
+name displayed in lists/sessions views. Renaming it would lose that UI
+behavior.
 
 **Why ContextVar works here**
 
@@ -144,8 +184,9 @@ specifically `await asyncio.wait_for(self.consume_task, timeout=30)` at line
 **The OTel trace ID → MLflow request ID mapping**
 
 MLflow derives its `request_id` from the OTel `trace_id` when ingesting spans
-via OTLP. The formula lives at
-`mlflow/tracing/utils/__init__.py:455-465`:
+via OTLP. The canonical mapping is a single function,
+`mlflow.tracing.utils.generate_mlflow_trace_id_from_otel_trace_id`
+(`mlflow/tracing/utils/__init__.py:455-465`):
 
 ```python
 def generate_mlflow_trace_id_from_otel_trace_id(otel_trace_id: int) -> str:
@@ -155,39 +196,27 @@ def generate_mlflow_trace_id_from_otel_trace_id(otel_trace_id: int) -> str:
 where `TRACE_REQUEST_ID_PREFIX = "tr-"` (`mlflow/tracing/constant.py:165`) and
 `encode_trace_id` is a cached wrapper around
 `opentelemetry.trace.format_trace_id` — the standard 32-character lowercase hex
-representation of the 128-bit trace ID. The MLflow `request_id` for any span
-seen in `on_end` can therefore be computed directly from
-`span.context.trace_id` as `f"tr-{trace_id:032x}"`, with no search or timestamp
-required.
+representation of the 128-bit trace ID. The function is also the single
+source of this mapping inside MLflow: every other site that needs it
+(`mlflow/entities/span.py:418`, `mlflow/tracing/distributed/__init__.py:167`,
+`generate_trace_id_v3`) calls it rather than re-implementing the formula.
 
-> **Caveat —** this formula is an internal MLflow implementation detail, not a
-> public API. The practical risk of it changing is low (it is built on the OTel
-> standard trace ID format and has been stable since MLflow tracing was
-> introduced), but it should be noted as a coupling point.
+We call this function directly rather than hard-coding `f"tr-{trace_id:032x}"`.
+The function is public (no leading underscore, has a docstring), and MLflow
+already ships a v4-schema sibling
+(`generate_trace_id_v4_from_otel_trace_id`, same file, line 468) that produces
+a different format (`trace:/<location>/<hex>`) — so a future MLflow release
+may flip defaults. Calling the canonical function lets us inherit whichever
+schema MLflow considers correct without our code needing to know about it.
 
 ### Putting it together
 
-`tracing.py` exposes the ContextVar and a buffer-drain function:
-
-```python
-# tracing.py additions (sketch)
-from contextvars import ContextVar
-
-trace_tags: ContextVar[dict[str, str] | None] = ContextVar(
-    "trace_tags", default=None
-)
-
-# Inside _SessionIdSpanProcessor.on_end, after the existing root-span block:
-if span.parent is None:
-    tags = trace_tags.get()
-    if tags:
-        request_id = f"tr-{span.context.trace_id:032x}"
-        # store (request_id, dict(tags)) in a thread-safe buffer
-
-# New public function:
-def drain_tagged_trace_ids() -> list[tuple[str, dict[str, str]]]:
-    # pop and return all buffered entries
-```
+`tracing.py` exposes the ContextVar, a thread-safe buffer, and a drain function
+(`src/mlflow_adk/tracing.py:46-57`). Inside `_SessionIdSpanProcessor.on_end`,
+the root-span branch reads the ContextVar and, if tags are set, computes the
+MLflow `request_id` via `generate_mlflow_trace_id_from_otel_trace_id(trace_id)`
+and appends `(request_id, dict(tags))` to the buffer. A `dict(tags)` snapshot
+is stored so later caller-side mutations cannot affect the buffered value.
 
 The simulation loop wraps each scenario:
 
@@ -203,7 +232,7 @@ for eval_case in eval_set.eval_cases:
     )
 
     token = trace_tags.set(
-        {"scenario": eval_case.eval_id, "source": "simulation"}
+        {"scenario": eval_case.eval_id, "mlflow.source.name": "simulation", ...}
     )
     try:
         await EvaluationGenerator.generate_responses(
@@ -231,25 +260,20 @@ for eval_case in eval_set.eval_cases:
 all spans have arrived at the MLflow server before `set_trace_tag` is called.
 (The relevant flush is `TracerProvider.force_flush()` propagating to the
 `BatchSpanProcessor`, not `_SessionIdSpanProcessor.force_flush` —
-the latter is a no-op stub at `src/mlflow_adk/tracing.py:137`.) The trace ID
+the latter is a no-op stub at `src/mlflow_adk/tracing.py:168`.) The trace ID
 correlation, however, is now exact — the IDs were captured directly from the
 spans as they ended, not inferred from a query.
 
 `eval_case.eval_id` is the YAML filename stem (`temperature_basic`, etc.) —
-already set in `load_eval_set` (`src/mlflow_adk/simulate.py:38`) as
+already set in `load_eval_set` (`src/mlflow_adk/simulate.py:46`) as
 `EvalCase(eval_id=path.stem, ...)`.
 
 ### Server case
 
-`server.py` runs as a long-lived process that handles interactive chat requests.
-Because the server is always in one mode for its entire lifetime, the setup is
-a single line:
-
-```python
-# server.py — set once before uvicorn starts, never reset
-trace_tags.set({"source": "interactive"})
-uvicorn.run(app, host="127.0.0.1", port=port)
-```
+`server.py` runs as a long-lived process that handles interactive chat
+requests. Because the server is always in one mode for its entire lifetime,
+the ContextVar is set once before `uvicorn.run` and never reset
+(`src/mlflow_adk/server.py:79-83`).
 
 **Propagation through uvicorn.** `uvicorn.run()` calls `asyncio.run()`
 internally, which launches the server coroutine as a `Task` copied from the
@@ -258,16 +282,32 @@ creates a new `Task` per connection/request inside that server task via
 `asyncio.create_task()`. Each request task inherits the context, including the
 `trace_tags` value. `on_end` runs synchronously inside `span.end()`, which is
 called from within the request task, so every interactive trace correctly picks
-up `{"source": "interactive"}` without any per-request setup.
+up `{"mlflow.source.name": "interactive", ...}` without any per-request setup.
 
 **No `reset()` needed.** The server sets `trace_tags` once and leaves it. Each
 request task has its own copy of the context (by asyncio's copy-on-create
 rule), so mutations inside one request task don't affect other tasks or the
 root value. The tag is effectively immutable for the server's lifetime.
 
-The server still needs the same flush-then-tag step as the simulation loop, but
-typically driven from a background task or a per-request hook — exact placement
-is left for the implementation.
+**Flush-then-tag via a background drain loop.** Unlike the simulation loop,
+which has a natural per-scenario boundary, the server has no such hook. The
+implementation registers a FastAPI lifecycle that runs an asyncio task in the
+background (`src/mlflow_adk/server.py:42-72`):
+
+- **Startup**: `_drain_loop` is spawned. Every 5 seconds it calls
+  `provider.force_flush()` to drain the `BatchSpanProcessor` queue, then drains
+  the tag buffer and applies each `(request_id, key, value)` triple via
+  `mlflow.set_trace_tag`.
+- **Shutdown**: the drain task is cancelled and awaited, then one final drain
+  runs to catch any tags buffered between the last poll and SIGTERM. Uvicorn
+  invokes shutdown hooks before exit, so Ctrl-C and graceful termination both
+  trigger this path.
+
+The 5-second cadence is a trade-off — interactive traces appear in MLflow
+immediately, then gain their tags within the next polling interval. The drain
+itself is cheap when idle (`force_flush` on an empty `BatchSpanProcessor` queue
+returns near-instantly, and the buffer check is one lock + empty-list test), so
+there is no benefit to dynamic event-driven signalling.
 
 ---
 
@@ -281,6 +321,9 @@ mlflow.search_traces(filter_string="tags.source = 'interactive'")
 
 # All simulation traces
 mlflow.search_traces(filter_string="tags.source = 'simulation'")
+
+# All traces from a given commit
+mlflow.search_traces(filter_string="tags.git_commit = '<sha>'")
 
 # A specific scenario
 mlflow.search_traces(filter_string="tags.scenario = 'temperature_basic'")

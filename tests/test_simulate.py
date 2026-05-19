@@ -18,9 +18,9 @@ async def test_generate_responses_uses_user_simulator_config_from_yaml(
     (scenarios / "s.yaml").write_text(
         "starting_prompt: 'Hi'\nconversation_plan: 'Ask once.\n'\n"
     )
-    (tmp_path / "user_simulator.yaml").write_text(
-        "model: gemini-test\nmaxAllowedInvocations: 7\n"
-    )
+    config_path = tmp_path / "user_simulator.yaml"
+    config_path.write_text("model: gemini-test\nmaxAllowedInvocations: 7\n")
+    monkeypatch.setattr("mlflow_adk.simulate.USER_SIMULATOR_CONFIG", config_path)
 
     captured = {}
 
@@ -32,10 +32,7 @@ async def test_generate_responses_uses_user_simulator_config_from_yaml(
 
     monkeypatch.setattr(EvaluationGenerator, "_process_query", fake_process_query)
 
-    await run_simulation(
-        scenarios_dir=scenarios,
-        user_simulator_config_path=tmp_path / "user_simulator.yaml",
-    )
+    await run_simulation(scenarios_dir=scenarios, experiment="test-exp")
 
     sim = captured["user_simulator"]
     assert sim._config.model == "gemini-test"
@@ -43,7 +40,7 @@ async def test_generate_responses_uses_user_simulator_config_from_yaml(
 
 
 @pytest.mark.integration
-async def test_simulation_writes_spans_to_file_sink(tmp_path):
+async def test_simulation_writes_spans_to_file_sink(tmp_path, monkeypatch):
     """End-to-end demo for the ADK PR.
 
     Drives the simple_agent with an LLM-backed user simulator configured from
@@ -66,12 +63,12 @@ async def test_simulation_writes_spans_to_file_sink(tmp_path):
     )
     config_path = tmp_path / "user_simulator.yaml"
     config_path.write_text("model: gemini-3.1-flash-lite\nmaxAllowedInvocations: 1\n")
+    monkeypatch.setattr("mlflow_adk.simulate.USER_SIMULATOR_CONFIG", config_path)
     traces_path = tmp_path / "traces.jsonl"
 
     await run_simulation(
         scenarios_dir=scenarios,
-        user_simulator_config_path=config_path,
-        mlflow_enabled=False,
+        experiment=None,
         output_traces=traces_path,
     )
 

@@ -14,15 +14,15 @@ agent:
 agent_x_mlflow:
 	@curl -sf $(MLFLOW_TRACKING_URI)/health > /dev/null 2>&1 || \
 		{ echo "MLflow server is not running. Start it first with: make mlflow"; exit 1; }
-	uv run python -m mlflow_adk.server
+	uv run python -m mlflow_adk.server --experiment adk-demo
 
 simulate:
 	@curl -sf $(MLFLOW_TRACKING_URI)/health > /dev/null 2>&1 || \
 		{ echo "MLflow server is not running. Start it first with: make mlflow"; exit 1; }
-	uv run python -m mlflow_adk.simulate
+	uv run python -m mlflow_adk.simulate --experiment adk-sim
 
 simulate_to_file:
-	uv run python -m mlflow_adk.simulate --no-mlflow --output-traces traces.jsonl
+	uv run python -m mlflow_adk.simulate --output-traces traces.jsonl
 
 test:
 	uv run pytest tests/ -m unit -v

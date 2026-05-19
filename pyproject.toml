@@ -3,6 +3,7 @@ name = "mlflow-adk"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
+    "gitpython>=3.1",
     "google-adk",
     "google-genai",
     "mlflow>=3.6.0",

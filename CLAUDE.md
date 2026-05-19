@@ -43,6 +43,7 @@ without any tracing.
 - `google-adk` is installed from the fork at `vendor/google-adk` (editable). Do not add it from PyPI. To update the fork: `git -C vendor/google-adk pull`.
 - Format and lint with `ruff`. Run `ruff format .` then `ruff check .` before committing. Never run ruff on `vendor/` — it is third-party code.
 - Python 3.13+. Use `src/` layout.
+- **All imports at the top of the file.** No function-scoped imports, no `try/except ImportError` guards for "optional" dependencies. Every import the file uses goes in the module-level import block at the top, sorted by `ruff`. If you find yourself wanting a deferred import (to break a cycle, dodge a heavy dependency, or guard an optional one), restructure the modules instead.
 - **Configuration via Pydantic settings** — never read env vars with `os.environ.get`. All config lives in `src/mlflow_adk/settings.py` as a `pydantic_settings.BaseSettings` subclass. This gives free `.env` loading, type coercion, validation, and a serialisable object you can log or pass around (`settings.model_dump()` / `settings.model_dump_json()`).
 
 ## Development Methodology

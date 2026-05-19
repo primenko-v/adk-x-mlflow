@@ -1924,6 +1924,7 @@ name = "mlflow-adk"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "gitpython" },
     { name = "google-adk" },
     { name = "google-genai" },
     { name = "mlflow" },
@@ -1943,6 +1944,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "gitpython", specifier = ">=3.1" },
     { name = "google-adk", editable = "vendor/google-adk" },
     { name = "google-genai" },
     { name = "mlflow", specifier = ">=3.6.0" },
