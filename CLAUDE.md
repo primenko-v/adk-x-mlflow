@@ -45,6 +45,7 @@ without any tracing.
 - Python 3.13+. Use `src/` layout.
 - **All imports at the top of the file.** No function-scoped imports, no `try/except ImportError` guards for "optional" dependencies. Every import the file uses goes in the module-level import block at the top, sorted by `ruff`. If you find yourself wanting a deferred import (to break a cycle, dodge a heavy dependency, or guard an optional one), restructure the modules instead.
 - **Configuration via Pydantic settings** — never read env vars with `os.environ.get`. All config lives in `src/mlflow_adk/settings.py` as a `pydantic_settings.BaseSettings` subclass. This gives free `.env` loading, type coercion, validation, and a serialisable object you can log or pass around (`settings.model_dump()` / `settings.model_dump_json()`).
+- **Docstrings and comments — overrides the global one-line rule.** Multi-line docstrings are fine when they document a non-obvious *why*: a subtle invariant, a counterintuitive behaviour, an explanation of a workaround. Roughly **under ~10 lines**. If you need more than that, the content is documentation, not a comment — put it in `docs/` and have the docstring link to it. Don't restate what the code obviously does (function name + signature + types already do that). Don't include usage examples that argparse `--help` or function signatures already convey.
 
 ## Development Methodology
 

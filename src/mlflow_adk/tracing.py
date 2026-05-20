@@ -23,6 +23,8 @@ from pathlib import Path
 
 import git
 import mlflow
+from mlflow import MlflowClient
+from mlflow.entities.model_registry import PromptVersion
 from mlflow.tracing.utils import generate_mlflow_trace_id_from_otel_trace_id
 from opentelemetry import trace as otel_trace
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor
@@ -90,23 +92,55 @@ def git_info() -> dict[str, str]:
     return tags
 
 
-def flush_and_apply_tags() -> None:
+def flush_and_apply_tags() -> list[str]:
     """Flush queued spans, then apply any buffered tags via MLflow.
 
     Calls ``provider.force_flush()`` so the ``BatchSpanProcessor`` has shipped
     all queued spans to MLflow — ``set_trace_tag`` needs the ``TraceInfo``
     record to exist before tags can be attached. A per-tag try/except prevents
     one failed call from skipping the rest.
+
+    Returns the list of request_ids that received tags, so callers can do
+    follow-up per-trace work (e.g. linking prompts via
+    ``link_prompt_to_traces``) without duplicating the buffer drain.
     """
     provider = otel_trace.get_tracer_provider()
     if hasattr(provider, "force_flush"):
         provider.force_flush()
+    request_ids: list[str] = []
     for request_id, tags in drain_tagged_trace_ids():
+        request_ids.append(request_id)
         for key, value in tags.items():
             try:
                 mlflow.set_trace_tag(trace_id=request_id, key=key, value=value)
             except Exception:
                 logger.exception("Failed to set tag %s on trace %s", key, request_id)
+    return request_ids
+
+
+def link_prompt_to_traces(prompt_version: PromptVersion, trace_ids: list[str]) -> None:
+    """Attach a prompt version to each trace via the MLflow registry linker.
+
+    Populates the "Linked prompts" sidebar in the MLflow UI's trace view.
+    The trace tag ``prompt_version`` (set elsewhere) makes traces filterable
+    by version; this linker makes them clickable from the prompt's page and
+    vice versa. Both are useful — they're independent features.
+
+    Per-trace try/except so one failed link doesn't skip the rest.
+    """
+    client = MlflowClient()
+    for trace_id in trace_ids:
+        try:
+            client.link_prompt_versions_to_trace(
+                prompt_versions=[prompt_version], trace_id=trace_id
+            )
+        except Exception:
+            logger.exception(
+                "Failed to link prompt %s v%d to trace %s",
+                prompt_version.name,
+                prompt_version.version,
+                trace_id,
+            )
 
 
 # ---------------------------------------------------------------------------

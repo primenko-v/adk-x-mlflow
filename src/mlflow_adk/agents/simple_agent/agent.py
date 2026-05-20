@@ -3,9 +3,14 @@ import logging
 from google.adk.agents import Agent
 from google.adk.tools import FunctionTool
 
+from mlflow_adk.agents.simple_agent import prompts
 from mlflow_adk.settings import settings
 
 logger = logging.getLogger(__name__)
+
+_prompt = prompts.load()
+PROMPT_NAME: str = prompts.PROMPT_NAME
+PROMPT_VERSION: int = _prompt.version
 
 _CITIES: dict[str, float] = {
     "london": 12.0,
@@ -52,10 +57,6 @@ root_agent = Agent(
     name="simple_agent",
     model=settings.agent_model,
     description="A simple weather assistant that answers temperature questions.",
-    instruction=(
-        "You are a helpful weather assistant. "
-        "When asked about the temperature in a city, use the get_temperature tool. "
-        "Respond concisely."
-    ),
+    instruction=_prompt.template,
     tools=[FunctionTool(get_temperature), FunctionTool(get_cities)],
 )

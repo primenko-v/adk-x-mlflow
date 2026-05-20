@@ -1,8 +1,10 @@
 import argparse
 import asyncio
+import importlib
 import logging
 from pathlib import Path
 
+import mlflow
 import yaml
 from google.adk.evaluation.conversation_scenarios import ConversationScenario
 from google.adk.evaluation.eval_case import EvalCase
@@ -12,12 +14,14 @@ from google.adk.evaluation.simulation.llm_backed_user_simulator import (
     LlmBackedUserSimulatorConfig,
 )
 from google.adk.telemetry.setup import maybe_set_otel_providers
+from mlflow.entities.model_registry import PromptVersion
 
 from mlflow_adk.tracing import (
     add_file_sink,
     configure_tracing,
     flush_and_apply_tags,
     git_info,
+    link_prompt_to_traces,
     setup_otlp_export,
     trace_tags,
 )
@@ -98,12 +102,36 @@ async def run_simulation(
     )
 
     # Provenance shared across every scenario in this batch. Computed once;
-    # spread into the per-scenario tag dict below.
+    # spread into the per-scenario tag dict below. ``prompt_version`` is the
+    # MLflow Prompt Registry version pinned by the agent — lets us filter the
+    # trace list by which revision of the instruction produced each scenario.
     base_tags = {
         "source": "simulation",
         "agent_module": agent_module,
         **git_info(),
     }
+    agent_pkg = importlib.import_module(f"{agent_module}.agent")
+    prompt_version = getattr(agent_pkg, "PROMPT_VERSION", None)
+    prompt_name = getattr(agent_pkg, "PROMPT_NAME", None)
+    if prompt_version is not None:
+        base_tags["prompt_version"] = str(prompt_version)
+    # Fetch the PromptVersion handle once so we can populate the trace's
+    # "Linked prompts" sidebar in the MLflow UI. Independent of the
+    # ``prompt_version`` tag above — the tag is a string for filtering; the
+    # linker creates a clickable association between trace and registry.
+    prompt_version_obj: PromptVersion | None = None
+    if experiment is not None and prompt_name and prompt_version is not None:
+        try:
+            prompt_version_obj = mlflow.genai.load_prompt(
+                f"prompts:/{prompt_name}/{prompt_version}"
+            )
+        except Exception:
+            logger.exception(
+                "Could not load prompt %s v%d for trace linking — traces will "
+                "still be tagged but the UI sidebar will be empty.",
+                prompt_name,
+                prompt_version,
+            )
 
     total = 0
     for eval_case in eval_set.eval_cases:
@@ -136,7 +164,9 @@ async def run_simulation(
         total += len(result)
 
         if experiment is not None:
-            flush_and_apply_tags()
+            request_ids = flush_and_apply_tags()
+            if prompt_version_obj is not None and request_ids:
+                link_prompt_to_traces(prompt_version_obj, request_ids)
 
     logger.info("Simulation complete — %d case(s) processed", total)
 
