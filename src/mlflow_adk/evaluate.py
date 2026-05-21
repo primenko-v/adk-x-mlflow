@@ -44,7 +44,7 @@ from mlflow.tracing.constant import AssessmentMetadataKey, TraceMetadataKey
 
 from mlflow_adk.agents.simple_agent.agent import PROMPT_NAME
 from mlflow_adk.judges.mlflow_builtin import make_conversation_scorers
-from mlflow_adk.judges.mlflow_custom import make_custom_judges
+from mlflow_adk.judges.mlflow_custom import make_custom_judges, make_numeric_mirrors
 from mlflow_adk.scorers.performance import turn_latency_ms, turn_tokens
 from mlflow_adk.settings import settings
 
@@ -206,7 +206,9 @@ def _run_mlflow_conversation_scorers(sessions: dict[str, list[Trace]]) -> int:
 
     Returns the number of sessions actually scored.
     """
-    scorers = make_conversation_scorers() + make_custom_judges()
+    scorers = (
+        make_conversation_scorers() + make_custom_judges() + make_numeric_mirrors()
+    )
     scored = 0
     total_judge_errors = 0
     for session_id, session_traces in sessions.items():
@@ -325,7 +327,12 @@ def run_evaluation(
                 "session_count": len(sessions),
                 "turn_scorers": ",".join(s.name for s in TURN_SCORERS),
                 "session_scorers_mlflow": ",".join(
-                    s.name for s in make_conversation_scorers() + make_custom_judges()
+                    s.name
+                    for s in (
+                        make_conversation_scorers()
+                        + make_custom_judges()
+                        + make_numeric_mirrors()
+                    )
                 ),
             }
         )
