@@ -6,37 +6,27 @@ from google.adk.evaluation.evaluation_generator import EvaluationGenerator
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
 
-from mlflow_adk.simulate import load_eval_set, run_simulation
+from mlflow_adk.simulate import (
+    load_eval_set,
+    load_user_simulator_config,
+    run_simulation,
+)
 
 
 @pytest.mark.unit
-async def test_generate_responses_uses_user_simulator_config_from_yaml(
-    tmp_path, monkeypatch, no_tracing
-):
-    scenarios = tmp_path / "scenarios"
-    scenarios.mkdir()
-    (scenarios / "s.yaml").write_text(
-        "starting_prompt: 'Hi'\nconversation_plan: 'Ask once.\n'\n"
-    )
-    config_path = tmp_path / "user_simulator.yaml"
-    config_path.write_text("model: gemini-test\nmaxAllowedInvocations: 7\n")
-    monkeypatch.setattr("mlflow_adk.simulate.USER_SIMULATOR_CONFIG", config_path)
+def test_load_user_simulator_config_maps_yaml_camelcase_to_snake_case(tmp_path):
+    path = tmp_path / "user_simulator.yaml"
+    path.write_text("model: gemini-test\nmaxAllowedInvocations: 7\n")
 
-    captured = {}
+    config = load_user_simulator_config(path)
 
-    async def fake_process_query(
-        module_name, user_simulator, agent_name=None, initial_session=None
-    ):
-        captured["user_simulator"] = user_simulator
-        return []
+    assert config.model == "gemini-test"
+    assert config.max_allowed_invocations == 7
 
-    monkeypatch.setattr(EvaluationGenerator, "_process_query", fake_process_query)
 
-    await run_simulation(scenarios_dir=scenarios, experiment="test-exp")
-
-    sim = captured["user_simulator"]
-    assert sim._config.model == "gemini-test"
-    assert sim._config.max_allowed_invocations == 7
+@pytest.mark.unit
+def test_load_user_simulator_config_returns_none_when_file_missing(tmp_path):
+    assert load_user_simulator_config(tmp_path / "missing.yaml") is None
 
 
 @pytest.mark.integration
@@ -138,7 +128,6 @@ def test_load_eval_set_builds_cases_from_yaml(tmp_path):
 
     eval_set = load_eval_set(tmp_path)
 
-    assert eval_set.eval_set_id == "adk-x-mlflow"
     assert len(eval_set.eval_cases) == 1
     case = eval_set.eval_cases[0]
     assert case.eval_id == "weather"

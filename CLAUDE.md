@@ -66,7 +66,14 @@ Tests are not an afterthought — write the test first (see TDD above).
 
 **Framework**: pytest
 
-**What to test**: meaningful behaviour — a workflow completing correctly, a tool returning the right data, a trace being emitted. Do not write tests for trivial mechanics (object instantiation, attribute assignment, type checks). If a test does not catch a real bug, it should not exist.
+**What to test**: meaningful behaviour — a workflow completing correctly, a tool returning the right data, a trace being emitted. Before writing a test, name a concrete bug it would catch that wouldn't surface on the first production run. If you can't, don't write it.
+
+**What NOT to test** — recognise these anti-patterns and skip the test entirely:
+
+- *Config pass-through to a library class.* `Foo(model=settings.x)` doesn't need a test asserting `result.model == settings.x` — that tests the library's pydantic field, not your code. Broken forwarding surfaces on the first real call.
+- *Hardcoded-literal name assertions.* `assert scorer.name == "session_groundedness"` re-asserts a literal you wrote into the constructor one file over. Renames touch both files together; the test catches nothing.
+- *"Returns fresh instances each call."* `assert a is not b` on a factory that returns a list literal tests Python, not your code.
+- *Trivial pass-through wrappers.* For a function whose body is one `Constructor(**kw)` or one `library.do(...)`, the only meaningful test is a behavioural integration test (real or recorded LLM, real trace, etc.). Skip the unit test rather than fake one.
 
 **Test structure**:
 - One test file per module: `module.py` → `test_module.py`
@@ -78,7 +85,7 @@ Tests are not an afterthought — write the test first (see TDD above).
 - One thing per test, keep it short
 - Name: `test_<what>_<condition>_<expected>` e.g. `test_temperature_tool_unknown_city_returns_none`
 - Arrange-Act-Assert, each section a few lines at most
-- Mock external dependencies (APIs, LLMs), never mock the unit under test
+- Mock external dependencies (APIs, LLMs), never mock the unit under test. Don't monkeypatch an internal collaborator to manufacture the assertion's expected value (e.g. patching a factory to return `["S1","S2","S3","S4"]` then asserting count `== 4`) — the mock dictated the outcome.
 - Compare whole objects, not individual fields:
   ```python
   expected = Forecast(city="Berlin", temp_c=12)

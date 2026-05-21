@@ -95,20 +95,6 @@ def test_root_span_with_empty_tags_does_not_buffer():
 
 
 @pytest.mark.unit
-def test_drain_clears_buffer():
-    processor = _SessionIdSpanProcessor()
-    span = _fake_span(trace_id=1, parent_is_none=True)
-    token = trace_tags.set({"source": "simulation"})
-    try:
-        processor.on_end(span)
-    finally:
-        trace_tags.reset(token)
-
-    drain_tagged_trace_ids()
-    assert drain_tagged_trace_ids() == []
-
-
-@pytest.mark.unit
 def test_flush_and_apply_tags_calls_force_flush_and_sets_each_tag(monkeypatch):
     processor = _SessionIdSpanProcessor()
     token = trace_tags.set({"scenario": "weather", "source": "simulation"})
