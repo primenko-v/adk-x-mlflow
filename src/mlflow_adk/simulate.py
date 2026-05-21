@@ -75,13 +75,23 @@ async def run_simulation(
     experiment: str | None = None,
     agent_module: str = AGENT_MODULE,
     output_traces: Path | None = None,
-) -> None:
+    write_trace_ids: Path | None = None,
+) -> list[str]:
     """Run all scenarios in ``scenarios_dir``.
 
     ``experiment`` is the MLflow experiment name. Default ``None`` disables
     MLflow export — only useful in combination with ``output_traces`` to
     capture spans to a file for offline inspection. At least one of
     ``experiment`` or ``output_traces`` must be set.
+
+    ``write_trace_ids``, if provided, is the path to write the MLflow trace
+    IDs of every scenario in this batch (one per line) once the batch
+    finishes. The output is the explicit handoff that
+    ``evaluate.py --trace-ids <path>`` reads — scoring exactly the traces
+    that the simulation produced, with no tag-filter guesswork.
+
+    Returns the list of trace IDs produced (same as the file contents),
+    so programmatic callers can chain simulate → evaluate in-process.
     """
     if experiment is None and output_traces is None:
         raise ValueError(
@@ -133,6 +143,7 @@ async def run_simulation(
                 prompt_version,
             )
 
+    all_trace_ids: list[str] = []
     total = 0
     for eval_case in eval_set.eval_cases:
         single_case = EvalSet(eval_set_id=eval_set.eval_set_id, eval_cases=[eval_case])
@@ -165,10 +176,16 @@ async def run_simulation(
 
         if experiment is not None:
             request_ids = flush_and_apply_tags()
+            all_trace_ids.extend(request_ids)
             if prompt_version_obj is not None and request_ids:
                 link_prompt_to_traces(prompt_version_obj, request_ids)
 
+    if write_trace_ids is not None and all_trace_ids:
+        write_trace_ids.write_text("\n".join(all_trace_ids) + "\n")
+        logger.info("Wrote %d trace ID(s) to %s", len(all_trace_ids), write_trace_ids)
+
     logger.info("Simulation complete — %d case(s) processed", total)
+    return all_trace_ids
 
 
 if __name__ == "__main__":
@@ -190,6 +207,16 @@ if __name__ == "__main__":
         dest="output_traces",
         help="Also write spans as JSON to this path.",
     )
+    parser.add_argument(
+        "--write-trace-ids",
+        type=Path,
+        default=None,
+        dest="write_trace_ids",
+        help=(
+            "Write the MLflow trace ID of each scenario (one per line) to "
+            "this path. Pair with `evaluate.py --trace-ids <path>`."
+        ),
+    )
     args = parser.parse_args()
     asyncio.run(
         run_simulation(
@@ -197,5 +224,6 @@ if __name__ == "__main__":
             experiment=args.experiment,
             agent_module=args.agent,
             output_traces=args.output_traces,
+            write_trace_ids=args.write_trace_ids,
         )
     )

@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     agent_model: str = "gemini-3.1-flash-lite"
     mlflow_tracking_uri: str = "http://localhost:5000"
 
+    # Judge model for MLflow conversation scorers (Correctness, Safety, etc.).
+    # Format follows MLflow's convention: ``<provider>:/<model>`` — e.g.
+    # ``openai:/gpt-4.1-mini``, ``gemini/gemini-2.5-flash`` (LiteLLM-routed).
+    # ``None`` defers to MLflow's own default (openai:/gpt-4.1-mini on
+    # non-Databricks tracking servers, which would require OPENAI_API_KEY).
+    judge_model: str | None = None
+
     prompt_source: PromptSource = PromptSource.REGISTRY
     # What to load in REGISTRY mode. Format: ``@<alias>`` to load by alias,
     # or ``<version>`` (an integer-as-string) to pin a specific revision.

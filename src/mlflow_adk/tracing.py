@@ -212,6 +212,23 @@ class _SessionIdSpanProcessor(SpanProcessor):
             # queues a reference so this write is visible to the export thread.
             span._attributes["session.id"] = session_id
 
+        # 1b. Mirror ADK tool spans to MLflow's TOOL conventions so the UI and
+        #     judges that rely on ``include_tool_calls_in_conversation`` (e.g.
+        #     our session-level groundedness judge) see tool I/O. ADK writes
+        #     gcp.vertex.agent.tool_call_args/tool_response; MLflow looks for
+        #     mlflow.spanInputs/Outputs plus mlflow.spanType == "TOOL".
+        if attrs.get("gen_ai.operation.name") == "execute_tool":
+            if "mlflow.spanType" not in attrs:
+                span._attributes["mlflow.spanType"] = "TOOL"
+            if (args := attrs.get("gcp.vertex.agent.tool_call_args")) and (
+                "mlflow.spanInputs" not in attrs
+            ):
+                span._attributes["mlflow.spanInputs"] = args
+            if (resp := attrs.get("gcp.vertex.agent.tool_response")) and (
+                "mlflow.spanOutputs" not in attrs
+            ):
+                span._attributes["mlflow.spanOutputs"] = resp
+
         # 2. Accumulate content from call_llm child spans.
         #    ADK always sets gcp.vertex.agent.llm_request ('{}' when content
         #    capture is disabled), so we check for a non-empty value.

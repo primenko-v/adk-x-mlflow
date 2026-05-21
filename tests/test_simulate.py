@@ -93,6 +93,43 @@ async def test_simulation_writes_spans_to_file_sink(tmp_path, monkeypatch):
 
 
 @pytest.mark.unit
+async def test_write_trace_ids_writes_one_id_per_line(
+    tmp_path, monkeypatch, no_tracing
+):
+    scenarios = tmp_path / "scenarios"
+    scenarios.mkdir()
+    (scenarios / "a.yaml").write_text(
+        "starting_prompt: 'Hi'\nconversation_plan: 'Ask once.\n'\n"
+    )
+    (scenarios / "b.yaml").write_text(
+        "starting_prompt: 'Hello'\nconversation_plan: 'Ask once.\n'\n"
+    )
+
+    async def fake_process_query(
+        module_name, user_simulator, agent_name=None, initial_session=None
+    ):
+        return []
+
+    monkeypatch.setattr(EvaluationGenerator, "_process_query", fake_process_query)
+
+    # Stub the drain so it pretends a trace was flushed per scenario; we just
+    # want to verify the IDs flow from there into the output file.
+    fake_ids = iter([["tr-aaa"], ["tr-bbb"]])
+    monkeypatch.setattr(
+        "mlflow_adk.simulate.flush_and_apply_tags",
+        lambda: next(fake_ids),
+    )
+    out = tmp_path / "ids.txt"
+
+    returned = await run_simulation(
+        scenarios_dir=scenarios, experiment="test-exp", write_trace_ids=out
+    )
+
+    assert returned == ["tr-aaa", "tr-bbb"]
+    assert out.read_text() == "tr-aaa\ntr-bbb\n"
+
+
+@pytest.mark.unit
 def test_load_eval_set_builds_cases_from_yaml(tmp_path):
     (tmp_path / "weather.yaml").write_text(
         "starting_prompt: 'What is the weather?'\n"
