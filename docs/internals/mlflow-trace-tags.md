@@ -69,11 +69,11 @@ traces in a session at any time using `search_traces` + `set_trace_tag`.
 tracking). Runs and traces live in independent hierarchies — a Run is not a
 parent of any trace.
 
-That said, MLflow supports a *correlation* between Runs and traces via the
-`mlflow.sourceRun` trace metadata key. Runs become relevant to this project
-once evaluation is added (`mlflow.genai.evaluate(...)` creates one). See
-[mlflow-runs-and-traces.md](mlflow-runs-and-traces.md) for how to wire that
-correlation when the evaluation branch is built — not in scope here.
+That said, MLflow supports a *correlation* between Runs and traces. The
+evaluation pipeline (`evaluate.py`) opens a Run per invocation and links it to
+the traces it scored via an `eval_run_id` trace tag (it deliberately avoids the
+`mlflow.sourceRun` metadata key — that path can't fire on OTLP ingest). See
+[mlflow-runs-and-traces.md](mlflow-runs-and-traces.md) for the full account.
 
 ---
 
@@ -211,28 +211,31 @@ schema MLflow considers correct without our code needing to know about it.
 
 ### Putting it together
 
-`tracing.py` exposes the ContextVar, a thread-safe buffer, and a drain function
-(`src/mlflow_adk/tracing.py:46-57`). Inside `_SessionIdSpanProcessor.on_end`,
+`tracing.py` exposes the ContextVar (`trace_tags`, `tracing.py:52`), a
+thread-safe buffer, the low-level drain (`drain_tagged_trace_ids`,
+`tracing.py:58`), and the `flush_and_apply_tags` wrapper (`tracing.py:95`)
+that callers actually use. Inside `_SessionIdSpanProcessor.on_end`,
 the root-span branch reads the ContextVar and, if tags are set, computes the
 MLflow `request_id` via `generate_mlflow_trace_id_from_otel_trace_id(trace_id)`
 and appends `(request_id, dict(tags))` to the buffer. A `dict(tags)` snapshot
 is stored so later caller-side mutations cannot affect the buffered value.
 
-The simulation loop wraps each scenario:
+The simulation loop wraps each scenario (`simulate.py:224-266`):
 
 ```python
 # simulate.py loop
-from mlflow_adk.tracing import trace_tags, drain_tagged_trace_ids
-from opentelemetry import trace as otel_trace
-import mlflow
+from mlflow_adk.tracing import flush_and_apply_tags, trace_tags
 
 for eval_case in eval_set.eval_cases:
-    single_case = EvalSet(
-        eval_set_id=eval_set.eval_set_id, eval_cases=[eval_case]
-    )
+    single_case = EvalSet(eval_set_id=eval_set.eval_set_id, eval_cases=[eval_case])
 
     token = trace_tags.set(
-        {"scenario": eval_case.eval_id, "mlflow.source.name": "simulation", ...}
+        {
+            **base_tags,                       # source="simulation", agent_module, git_*
+            "scenario": eval_case.eval_id,
+            "conversation_mode": "static" if eval_case.conversation else "scenario",
+            "mlflow.traceName": eval_case.eval_id,
+        }
     )
     try:
         await EvaluationGenerator.generate_responses(
@@ -244,29 +247,27 @@ for eval_case in eval_set.eval_cases:
     finally:
         trace_tags.reset(token)
 
-    if mlflow_enabled:
-        provider = otel_trace.get_tracer_provider()
-        if hasattr(provider, "force_flush"):
-            provider.force_flush()
-
-        for request_id, tags in drain_tagged_trace_ids():
-            for key, value in tags.items():
-                mlflow.set_trace_tag(
-                    trace_id=request_id, key=key, value=value
-                )
+    if experiment is not None:
+        request_ids = flush_and_apply_tags()
+        # request_ids is then used to link the prompt version to each trace
 ```
 
-`force_flush()` is still required: it drains the `BatchSpanProcessor` queue so
-all spans have arrived at the MLflow server before `set_trace_tag` is called.
-(The relevant flush is `TracerProvider.force_flush()` propagating to the
-`BatchSpanProcessor`, not `_SessionIdSpanProcessor.force_flush` —
-the latter is a no-op stub at `src/mlflow_adk/tracing.py:168`.) The trace ID
-correlation, however, is now exact — the IDs were captured directly from the
-spans as they ended, not inferred from a query.
+`flush_and_apply_tags()` (`tracing.py:95`) is the single helper that both the
+simulation loop and the server use. It calls `provider.force_flush()` — which
+drains the `BatchSpanProcessor` queue so every span has reached the MLflow
+server before `set_trace_tag` is called (the `TraceInfo` record must exist
+first) — then drains the tag buffer and applies each tag, returning the list
+of tagged `request_id`s so the caller can do follow-up per-trace work (the
+simulation uses them for `link_prompt_to_traces`). The trace-ID correlation is
+exact: the IDs were captured directly from the spans as they ended, not
+inferred from a query.
 
-`eval_case.eval_id` is the YAML filename stem (`temperature_basic`, etc.) —
-already set in `load_eval_set` (`src/mlflow_adk/simulate.py:46`) as
-`EvalCase(eval_id=path.stem, ...)`.
+(The relevant flush is `TracerProvider.force_flush()` propagating to the
+`BatchSpanProcessor`, not `_SessionIdSpanProcessor.force_flush`, which is a
+no-op stub.)
+
+`eval_case.eval_id` is the YAML filename stem (`temperature_basic`, etc.),
+set in `_build_eval_case` (`simulate.py:97`/`:102`) as `eval_id=path.stem`.
 
 ### Server case
 
@@ -330,7 +331,7 @@ mlflow.search_traces(filter_string="tags.scenario = 'temperature_basic'")
 
 # Scoped to an experiment
 mlflow.search_traces(
-    experiment_names=["adk-simulation"],
+    experiment_names=["adk-sim"],
     filter_string="tags.scenario = 'temperature_basic'",
 )
 ```
@@ -338,14 +339,11 @@ mlflow.search_traces(
 ### Setting multiple tags at once
 
 `mlflow.set_trace_tag` (and `MlflowClient.set_trace_tag`) set one key at a
-time; there is no `set_trace_tags` plural method in MLflow 3.x. Loop over the
-dict:
+time; there is no `set_trace_tags` plural method in MLflow 3.x. `flush_and_apply_tags()`
+loops over the dict for you; if you ever need to do it by hand the shape is:
 
 ```python
-from mlflow import MlflowClient
-
-client = MlflowClient()
 for request_id, tags in drain_tagged_trace_ids():
     for key, value in tags.items():
-        client.set_trace_tag(request_id, key, value)
+        mlflow.set_trace_tag(request_id, key, value)
 ```

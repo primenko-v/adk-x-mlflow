@@ -191,7 +191,7 @@ class _SessionIdSpanProcessor(SpanProcessor):
        ``mlflow.spanInputs`` / ``mlflow.spanOutputs`` so the Sessions view
        shows non-empty turns.
 
-    See docs/mlflow-session-view-bridge.md for a full explanation.
+    See docs/internals/mlflow-session-view-bridge.md for a full explanation.
     """
 
     def __init__(self) -> None:

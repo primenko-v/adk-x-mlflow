@@ -15,7 +15,7 @@ class PromptSource(StrEnum):
       The production workflow — no MLflow on the runtime hot path; the
       shipped prompt text is visible in PR review.
 
-    See ``docs/mlflow-runs-and-traces.md`` and the ``freeze_prompt`` CLI.
+    See ``docs/guide/mlflow-prompts.md`` and the ``freeze_prompt`` CLI.
     """
 
     REGISTRY = "registry"
