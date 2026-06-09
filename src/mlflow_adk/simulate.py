@@ -3,18 +3,21 @@ import asyncio
 import importlib
 import logging
 from pathlib import Path
+from typing import Any
 
 import mlflow
 import yaml
 from google.adk.evaluation.conversation_scenarios import ConversationScenario
-from google.adk.evaluation.eval_case import EvalCase
+from google.adk.evaluation.eval_case import EvalCase, Invocation, SessionInput
 from google.adk.evaluation.eval_set import EvalSet
 from google.adk.evaluation.evaluation_generator import EvaluationGenerator
 from google.adk.evaluation.simulation.llm_backed_user_simulator import (
     LlmBackedUserSimulatorConfig,
 )
 from google.adk.telemetry.setup import maybe_set_otel_providers
+from google.genai import types
 from mlflow.entities.model_registry import PromptVersion
+from pydantic import BaseModel
 
 from mlflow_adk.tracing import (
     add_file_sink,
@@ -29,10 +32,49 @@ from mlflow_adk.tracing import (
 AGENT_MODULE = "mlflow_adk.agents.simple_agent"
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-DEFAULT_SCENARIOS_DIR = PROJECT_ROOT / "simulations/scenarios"
+DEFAULT_INPUT_DIR = PROJECT_ROOT / "simulations/conversations"
 USER_SIMULATOR_CONFIG = PROJECT_ROOT / "simulations/user_simulator.yaml"
 
+# Cosmetic identifiers for the in-memory session a static conversation runs in.
+# The agent under test is stateless beyond session state, so these only show up
+# as the session's app_name/user_id in traces.
+STATIC_APP_NAME = "simple_agent"
+STATIC_USER_ID = "static_user"
+
 logger = logging.getLogger(__name__)
+
+
+class StaticConversationFile(BaseModel):
+    """Schema of a fixed-input conversation file.
+
+    ``messages`` are the verbatim user turns, replayed in order by ADK's
+    StaticUserSimulator (no LLM). ``state`` optionally seeds the session before
+    turn 1 — the "evaluate a turn given pre-established context" path.
+    """
+
+    messages: list[str]
+    state: dict[str, Any] | None = None
+
+    def to_eval_case(self, eval_id: str) -> EvalCase:
+        """Convert to an ADK EvalCase that the StaticUserSimulator will replay."""
+        conversation = [
+            Invocation(
+                user_content=types.Content(
+                    role="user", parts=[types.Part(text=message)]
+                )
+            )
+            for message in self.messages
+        ]
+        session_input = (
+            SessionInput(
+                app_name=STATIC_APP_NAME, user_id=STATIC_USER_ID, state=self.state
+            )
+            if self.state
+            else None
+        )
+        return EvalCase(
+            eval_id=eval_id, conversation=conversation, session_input=session_input
+        )
 
 
 def load_user_simulator_config(path: Path) -> LlmBackedUserSimulatorConfig | None:
@@ -41,12 +83,39 @@ def load_user_simulator_config(path: Path) -> LlmBackedUserSimulatorConfig | Non
     return LlmBackedUserSimulatorConfig.model_validate(yaml.safe_load(path.read_text()))
 
 
-def load_eval_set(scenarios_dir: Path) -> EvalSet:
-    cases = []
-    for path in sorted(scenarios_dir.glob("*.yaml")):
-        scenario = ConversationScenario.model_validate(yaml.safe_load(path.read_text()))
-        cases.append(EvalCase(eval_id=path.stem, conversation_scenario=scenario))
-    logger.info("Loaded %d scenario(s) from %s", len(cases), scenarios_dir)
+def _build_eval_case(path: Path) -> EvalCase:
+    """Build an EvalCase from one YAML file, choosing the mode by its shape.
+
+    A file with a ``messages`` list is a fixed-input conversation (ADK selects
+    the StaticUserSimulator); anything else is an LLM-driven
+    ConversationScenario. The two are mutually exclusive on EvalCase, so the
+    file's content alone decides which simulator runs it.
+    """
+    data = yaml.safe_load(path.read_text())
+    if "messages" in data:
+        # StaticUserSimulator path
+        return StaticConversationFile.model_validate(data).to_eval_case(path.stem)
+
+    elif "conversation_plan" in data:
+        # LlmBackedUserSimulator path
+        scenario = ConversationScenario.model_validate(data)
+        return EvalCase(eval_id=path.stem, conversation_scenario=scenario)
+
+    raise ValueError(
+        f"{path.name}: expected a 'messages' (static) or 'conversation_plan' "
+        f"(scenario) key, found neither."
+    )
+
+
+def load_eval_set(input_dir: Path) -> EvalSet:
+    """Load every ``*.yaml`` under ``input_dir`` (recursively) as an EvalCase.
+
+    Each file is classified by its shape via ``_build_eval_case``, so scenario
+    and static files can be organised into whatever subdirectories you like
+    (e.g. ``scenarios/`` and ``static/``) without any extra configuration.
+    """
+    cases = [_build_eval_case(path) for path in sorted(input_dir.rglob("*.yaml"))]
+    logger.info("Loaded %d eval case(s) from %s", len(cases), input_dir)
     return EvalSet(eval_set_id="adk-x-mlflow", eval_cases=cases)
 
 
@@ -71,13 +140,18 @@ def _setup_simulation_tracing(
 
 
 async def run_simulation(
-    scenarios_dir: Path = DEFAULT_SCENARIOS_DIR,
+    input_dir: Path = DEFAULT_INPUT_DIR,
     experiment: str | None = None,
     agent_module: str = AGENT_MODULE,
     output_traces: Path | None = None,
     write_trace_ids: Path | None = None,
 ) -> list[str]:
-    """Run all scenarios in ``scenarios_dir``.
+    """Run every eval case found under ``input_dir`` (recursively).
+
+    The directory holds both LLM-driven scenario files and fixed-input
+    ``messages`` files (typically in ``scenarios/`` and ``static/``
+    subdirectories); ADK picks the user simulator per case, so both kinds run
+    in one batch (see ``load_eval_set``).
 
     ``experiment`` is the MLflow experiment name. Default ``None`` disables
     MLflow export — only useful in combination with ``output_traces`` to
@@ -101,7 +175,9 @@ async def run_simulation(
 
     _setup_simulation_tracing(experiment, output_traces)
 
-    eval_set = load_eval_set(scenarios_dir)
+    eval_set = load_eval_set(input_dir)
+    if not eval_set.eval_cases:
+        raise ValueError(f"No eval cases found under {input_dir}. Nothing to run.")
     user_simulator_config = load_user_simulator_config(USER_SIMULATOR_CONFIG)
     logger.info(
         "Starting simulation — experiment=%s agent=%s scenarios=%d simulator=%s",
@@ -157,6 +233,11 @@ async def run_simulation(
             {
                 **base_tags,
                 "scenario": eval_case.eval_id,
+                # "static" = fixed-input replay, "scenario" = LLM-driven. Lets
+                # the MLflow trace list be filtered by input mode.
+                "conversation_mode": (
+                    "static" if eval_case.conversation is not None else "scenario"
+                ),
                 # Overrides the root-span-derived default name in the UI's
                 # trace list so scenarios are scannable without opening each.
                 "mlflow.traceName": eval_case.eval_id,
@@ -193,7 +274,13 @@ if __name__ == "__main__":
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
     )
     parser = argparse.ArgumentParser()
-    parser.add_argument("--scenarios", type=Path, default=DEFAULT_SCENARIOS_DIR)
+    parser.add_argument(
+        "--input",
+        type=Path,
+        default=DEFAULT_INPUT_DIR,
+        dest="input_dir",
+        help="Directory of conversation YAML files, read recursively.",
+    )
     parser.add_argument(
         "--experiment",
         default=None,
@@ -220,7 +307,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     asyncio.run(
         run_simulation(
-            args.scenarios,
+            args.input_dir,
             experiment=args.experiment,
             agent_module=args.agent,
             output_traces=args.output_traces,

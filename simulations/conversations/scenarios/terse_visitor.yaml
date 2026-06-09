@@ -1,0 +1,6 @@
+starting_prompt: "Temperature in Berlin?"
+conversation_plan: |
+  - You are a terse, no-nonsense user. One-line messages only, no pleasantries.
+  - Ask for the temperature in Berlin.
+  - As soon as you get a number, end the conversation.
+  - Do not ask follow-up questions.

@@ -45,7 +45,7 @@ async def test_simulation_writes_spans_to_file_sink(tmp_path, monkeypatch):
     if not os.environ.get("GOOGLE_CLOUD_PROJECT"):
         pytest.skip("Requires GOOGLE_CLOUD_PROJECT")
 
-    scenarios = tmp_path / "scenarios"
+    scenarios = tmp_path / "conversations"
     scenarios.mkdir()
     (scenarios / "weather.yaml").write_text(
         'starting_prompt: "What\'s the weather in London?"\n'
@@ -57,7 +57,7 @@ async def test_simulation_writes_spans_to_file_sink(tmp_path, monkeypatch):
     traces_path = tmp_path / "traces.jsonl"
 
     await run_simulation(
-        scenarios_dir=scenarios,
+        input_dir=scenarios,
         experiment=None,
         output_traces=traces_path,
     )
@@ -86,7 +86,7 @@ async def test_simulation_writes_spans_to_file_sink(tmp_path, monkeypatch):
 async def test_write_trace_ids_writes_one_id_per_line(
     tmp_path, monkeypatch, no_tracing
 ):
-    scenarios = tmp_path / "scenarios"
+    scenarios = tmp_path / "conversations"
     scenarios.mkdir()
     (scenarios / "a.yaml").write_text(
         "starting_prompt: 'Hi'\nconversation_plan: 'Ask once.\n'\n"
@@ -112,7 +112,9 @@ async def test_write_trace_ids_writes_one_id_per_line(
     out = tmp_path / "ids.txt"
 
     returned = await run_simulation(
-        scenarios_dir=scenarios, experiment="test-exp", write_trace_ids=out
+        input_dir=scenarios,
+        experiment="test-exp",
+        write_trace_ids=out,
     )
 
     assert returned == ["tr-aaa", "tr-bbb"]
@@ -120,15 +122,80 @@ async def test_write_trace_ids_writes_one_id_per_line(
 
 
 @pytest.mark.unit
-def test_load_eval_set_builds_cases_from_yaml(tmp_path):
+async def test_run_simulation_runs_scenario_and_static_cases(
+    tmp_path, monkeypatch, no_tracing
+):
+    # Subdirectories under one input dir, found by the recursive read.
+    convos = tmp_path / "conversations"
+    (convos / "scenarios").mkdir(parents=True)
+    (convos / "static").mkdir()
+    (convos / "scenarios" / "scen.yaml").write_text(
+        "starting_prompt: 'Hi'\nconversation_plan: 'Ask once.\n'\n"
+    )
+    (convos / "static" / "static.yaml").write_text(
+        "messages:\n  - 'What is the temp?'\n"
+    )
+
+    # ADK selects the user simulator per case; capturing its type per call
+    # proves recursion finds both subdirs and dispatches scenario→LLM,
+    # static→static.
+    seen_simulators = []
+
+    async def fake_process_query(
+        module_name, user_simulator, agent_name=None, initial_session=None
+    ):
+        seen_simulators.append(type(user_simulator).__name__)
+        return []
+
+    monkeypatch.setattr(EvaluationGenerator, "_process_query", fake_process_query)
+
+    monkeypatch.setattr("mlflow_adk.simulate.flush_and_apply_tags", lambda: [])
+
+    await run_simulation(input_dir=convos, experiment="test-exp")
+
+    assert seen_simulators == ["LlmBackedUserSimulator", "StaticUserSimulator"]
+
+
+@pytest.mark.unit
+def test_load_eval_set_builds_static_case_from_messages(tmp_path):
+    (tmp_path / "seeded.yaml").write_text(
+        "state:\n  temperature_unit: fahrenheit\n"
+        "messages:\n  - 'What is the temperature in Berlin?'\n  - 'And Tokyo?'\n"
+    )
+
+    case = load_eval_set(tmp_path).eval_cases[0]
+
+    assert case.eval_id == "seeded"
+    assert case.conversation_scenario is None
+    messages = [inv.user_content.parts[0].text for inv in case.conversation]
+    assert messages == ["What is the temperature in Berlin?", "And Tokyo?"]
+    assert case.session_input.state == {"temperature_unit": "fahrenheit"}
+
+
+@pytest.mark.unit
+def test_load_eval_set_rejects_file_with_neither_key(tmp_path):
+    (tmp_path / "bogus.yaml").write_text("something_else: 1\n")
+
+    with pytest.raises(ValueError, match="bogus.yaml"):
+        load_eval_set(tmp_path)
+
+
+@pytest.mark.unit
+def test_load_eval_set_static_without_state_has_no_session_input(tmp_path):
+    (tmp_path / "plain.yaml").write_text("messages:\n  - 'Hi'\n")
+
+    assert load_eval_set(tmp_path).eval_cases[0].session_input is None
+
+
+@pytest.mark.unit
+def test_load_eval_set_builds_scenario_case_from_yaml(tmp_path):
     (tmp_path / "weather.yaml").write_text(
         "starting_prompt: 'What is the weather?'\n"
         "conversation_plan: 'Ask about temperature.\n'\n"
     )
 
-    eval_set = load_eval_set(tmp_path)
+    case = load_eval_set(tmp_path).eval_cases[0]
 
-    assert len(eval_set.eval_cases) == 1
-    case = eval_set.eval_cases[0]
     assert case.eval_id == "weather"
+    assert case.conversation is None
     assert case.conversation_scenario.starting_prompt == "What is the weather?"

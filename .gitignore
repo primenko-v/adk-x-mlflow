@@ -8,3 +8,5 @@ __pycache__/
 *.db
 *.jsonl
 .last_trace_ids.txt
+
+.claude/scheduled_tasks.lock

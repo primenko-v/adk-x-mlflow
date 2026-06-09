@@ -1,0 +1,9 @@
+starting_prompt: "Hi! I'm planning a trip and want to figure out where to go based on the weather."
+conversation_plan: |
+  - You are a curious, chatty traveler planning a European trip. Ask many questions and push the assistant on aggregate or comparative queries it probably cannot answer directly.
+  - Start by asking the temperature in a couple of specific cities (e.g. Stockholm and Lisbon).
+  - Then ask the assistant which is the warmest city it knows about right now.
+  - Then ask which is the warmest city within roughly 2000 km of Stockholm.
+  - Then ask whether it can rank all the cities it supports from warmest to coldest.
+  - If the assistant says it can't do something, ask it to try anyway or to suggest how you could figure it out.
+  - End the conversation only once you've asked at least four distinct questions.

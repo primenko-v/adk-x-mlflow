@@ -1,0 +1,7 @@
+# Fixed-input conversation (no LLM user simulator). The first turn establishes a
+# preference; later turns should be answered in Fahrenheit because the agent
+# recorded it in session state via set_temperature_unit.
+messages:
+  - "Show temperatures in Fahrenheit from now on."
+  - "What's the temperature in Berlin?"
+  - "And Tokyo?"
