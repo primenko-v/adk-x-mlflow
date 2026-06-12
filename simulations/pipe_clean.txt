@@ -1,0 +1,19 @@
+# Which conversations `make simulate` runs.
+#
+# One glob pattern per line, matched against conversation filename stems
+# (the same name shown as the scenario in MLflow). Matches both static and
+# scenario files regardless of subdirectory. Lines starting with '#' are
+# comments. A pattern matching nothing is an error.
+#
+# '*' runs every conversation. Comment it out and list the ones you want:
+#
+#   curious_traveler
+#   temperature_*
+#   seeded_fahrenheit
+#
+# Available cases:
+#   scenarios/  curious_traveler, temperature_basic, terse_visitor
+#   static/     seeded_fahrenheit, unit_preference_in_convo
+
+static/seeded_fahrenheit
+scenarios/temperature_basic

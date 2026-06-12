@@ -1,0 +1,7 @@
+# Seeded-state conversation: the unit preference is established BEFORE turn 1 via
+# session state, not discussed in the conversation. The single turn should be
+# answered in Fahrenheit purely because get_temperature reads the seeded state.
+state:
+  temperature_unit: fahrenheit
+messages:
+  - "What's the temperature in Berlin?"
